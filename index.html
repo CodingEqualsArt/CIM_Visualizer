@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CIM Visualizer</title>
+    <style>
+    </style>
+</head>
+<body>
+    <header>
+        <h1 style="font-size: 144px">CIM Visualizer</h1>
+    </header>
+    <svg id="svg_main" width="20000" height="10000">
+        <g>
+            <text>
+                <tspan id="tspan_0"></tspan>
+                <tspan id="tspan_1"></tspan>
+                <tspan id="tspan_2"></tspan>
+                <tspan id="tspan_3"></tspan>
+                <tspan id="tspan_4"></tspan>
+                <tspan id="tspan_5"></tspan>
+            </text>
+            <line></line>
+        </g>
+    </svg>
+    <svg id="mySvg" width="320" height="320">
+        <defs id="mdef">
+            <pattern id="image" x="0" y="0" height="64" width="64">
+                <image x="-100" y="-110" width="280" height="350" xlink:href="node_modules/venustransit.jpg"></image>
+            </pattern>
+        </defs>
+    </svg>
+    <svg id="mySvg2" width="1000" height="1000">
+        <defs id="mdef2">
+            <pattern id="image_moon" x="0" y="0" height="64" width="64">
+                <image x="-100" y="-110" width="280" height="350" xlink:href="node_modules/moon.jpg"></image>
+            </pattern>
+        </defs>
+    </svg>
+    <div class="point-info-box"></div>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script type="module" defer>/*d3.js*/
+        //special thanks to https://www.d3indepth.com/
+        import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
+
+        const rMax = 80; //The circles will have a radius upto 'rMax' px
+        const fadeoutTime = 150;
+        const fontSize = 40;
+        const sunHeightScale = 500;
+        const sunrise = new Date('2022-11-09T07:32:00+01:00'); //https://www.timeanddate.com/sun/denmark/copenhagen?month=11&year=2022
+
+        d3  .select('text')
+            .attr("font-size", fontSize);
+
+        d3.xml("denmark.xml").then(function(xml){
+            const period = d3
+                .select(xml.documentElement) //the root element <myEnergyDataMarketDocument>
+                .select('TimeSeries')
+                .select('Period');
+            const points = period.selectAll('Point'); //We get an array/list/? of all <Point> XMLs
+
+
+            let start = period.select('timeInterval').select('start').node().innerHTML;
+            let end = period.select('timeInterval').select('end').node().innerHTML;
+
+
+            start = new Date(start);        //as all countries from the first phase are in CE(S)T, we will ignore potential further timezone issues
+            end = new Date(end);                                //(the data shouldn't look different just because my browser is in another timezone)
+
+            const startMilliseconds = start.getTime();
+            const endMilliseconds = end.getTime();
+
+            const timespanMilliseconds = endMilliseconds - startMilliseconds;
+            const resolutionMilliseconds = timespanMilliseconds / points.size();
+
+            console.log( (new Date('2022-11-09T00:00:00+01:00').getTime())); // in Chrome (Windows): Ctrl + Shift + J
+            console.log( (new Date('2022-11-09T00:00:00+01:00').getTime() + 60*60*1000) *  (2*Math.PI) / (24*60*60*1000));
+
+            function sunHeight (absoluteTime){
+                return Math.cos(
+                    (absoluteTime + 60*60*1000) *  //1*60*60*1000 hardcodes the one-hour offset from GMT to CET
+                    (2*Math.PI) / (24*60*60*1000)
+                    )  *
+                    sunHeightScale
+                    + 2*rMax + sunHeightScale
+            }
+
+            const horizonHeight = sunHeight(sunrise.getTime());
+            d3  .select('line')
+                .attr('x1', rMax)
+                .attr('x2', d3.select('#svg_main').node().getAttribute('width'))
+                .attr('y1', horizonHeight)
+                .attr('y2', horizonHeight)
+                .attr('stroke', 'black');
+
+            //E ~: A ~ r² => sqrt(E) ~ r
+            //rScale works like a function:  Energy -> radius of the circle
+            const outputMax = d3.max(points, function (point){return d3.select(point).select('out_Quantity\\.quantity').text();})
+            const outputMin = d3.min(points, function (point){return d3.select(point).select('out_Quantity\\.quantity').text();})
+            const rScale = d3   .scaleLinear()//.scaleSqrt()  //scaleSQRT is the natural choice but the denmark data is too static to see differences between the circles
+                                .domain([outputMin, outputMax])//.domain([0,outputMax])
+                                .range([0,rMax]);
+
+            d3  .select('g')       // goes to the <g> tag within the <svg> tag above
+                .selectAll('circle')    // selects all <circle> tags within it (here: none)
+                .data(points)
+                .join('circle')         // associates each data object (element of the array) with a unique <circle> tag; those <circle> tags missing above are created now (see source code in Chrome)
+                .attr('cx', function (point){return  d3.select(point).select('position').text() * 2 * rMax + rMax;})  // x coordinate of the circle; point refers to the data object (one point); alternatively we can have two arguments 'function (d,i)' with 'i' being the index of data object d
+                .attr('cy', function (point){return sunHeight(startMilliseconds + resolutionMilliseconds*(0.5 + parseInt(d3.select(point).select('position').text())));})
+                .attr('r', function(point){return rScale(d3.select(point).select('out_Quantity\\.quantity').text());})
+                .style('fill', function (point) {
+                    console.log(this.getAttribute('cy') - horizonHeight);
+                    if (this.getAttribute('cy') - horizonHeight > this.getAttribute('r')*1.5) return 'url(#image_moon)';
+                    if (this.getAttribute('cy') - horizonHeight > 0-this.getAttribute('r')*2) return 'red';
+                    return 'url(#image)';
+                })
+
+                .on('mouseover', function(mouseEvent, point){
+                    d3  .select(this) //this = the <circle>
+                        .attr('opacity', '.8'); //circle becomes a bit brighter
+
+                    d3  .select('#tspan_0')
+                        .text("Bought Energy:  " + d3.select(point).select('out_Quantity\\.quantity').text() + ' kWh');
+
+                    d3  .select('#tspan_1')
+                        .text("Quality:  " + d3.select(point).select('out_Quantity\\.quality').text())
+
+                    d3  .select('#tspan_2')
+                        .text("Sold Energy:  " + d3.select(point).select('in_Quantity\\.quantity').text() + ' kWh');
+
+                    d3  .select('#tspan_3')
+                        .text("Quality:  " + d3.select(point).select('in_Quantity\\.quality').text());
+
+                    const pointTimeStartMilliseconds = startMilliseconds + resolutionMilliseconds*parseInt(d3.select(point).select('position').text()); //here (Denmark): pos starts with 0
+                    d3  .select('#tspan_4')
+                        .text("Start:  " + new Date(pointTimeStartMilliseconds));
+
+                    d3  .select('#tspan_5')
+                        .text("End:  " + new Date(pointTimeStartMilliseconds + resolutionMilliseconds));
+
+                    d3  .selectAll('tspan')
+                        .attr('x', parseFloat(this.getAttribute('cx')) - 0.5*d3.select('#tspan_0').node().getComputedTextLength())
+                        .attr('dy', fontSize*1.5);
+
+                    d3  .select('text')
+                        .attr('y', parseFloat(this.getAttribute('cy')) + 2*rMax)
+                        .attr('visibility', 'visible');
+                })
+                .on('mouseout', function (mouseEvent, point){
+                    d3  .select(this)
+                        .transition()
+                        .duration(fadeoutTime)
+                        .attr('opacity', '1.0');
+
+                    d3  .select('text')
+                        .attr('visibility', 'hidden');
+                });
+        });
+
+
+        </script>
+    </body>
+</html>
